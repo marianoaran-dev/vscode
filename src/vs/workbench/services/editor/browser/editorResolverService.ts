@@ -161,6 +161,9 @@ export class EditorResolverService extends Disposable implements IEditorResolver
 		const editorAssociationType = isResourceDiffEditorInput(untypedEditor) ? EditorAssociationType.DiffEditor : isResourceMergeEditorInput(untypedEditor) ? EditorAssociationType.MergeEditor : EditorAssociationType.Editor;
 		if (resource && (this.resourceMatchesCache(resource) || this.resourceMatchesUserAssociation(resource, editorAssociationType))) {
 			await this.extensionService.whenInstalledExtensionsRegistered();
+			// Extensions may have registered editors while we were waiting. Refresh the
+			// flattened snapshot before selecting the editor for this first open.
+			this._flattenedEditors = this._flattenEditorsMap();
 		}
 
 		// Undefined resource -> untilted. Other malformed URI's are unresolvable
