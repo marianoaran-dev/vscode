@@ -15,6 +15,8 @@ import { EditorResolverService } from '../../browser/editorResolverService.js';
 import { IEditorGroupsService } from '../../common/editorGroupsService.js';
 import { diffEditorsAssociationsAgentsWindowDefault, EditorInputFactoryObject, EditorMatchRuleSource, EditorMatches, IEditorResolverService, ResolvedStatus, RegisteredEditorPriority, diffEditorsAssociationsSettingId, editorsAssociationsAgentsWindowDefault, editorsAssociationsSettingId } from '../../common/editorResolverService.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { IExtensionService } from '../../../extensions/common/extensions.js';
+import { TestExtensionService } from '../../../../test/common/workbenchTestServices.js';
 import { createEditorPart, ITestInstantiationService, TestFileEditorInput, TestServiceAccessor, workbenchInstantiationService } from '../../../../test/browser/workbenchTestServices.js';
 
 suite('EditorResolverService', () => {
@@ -1385,10 +1387,34 @@ suite('EditorResolverService', () => {
 		registeredSingleEditor.dispose();
 	});
 
-	test('User-configured editor association resolves on first startup with empty cache #244597', async () => {
+	test('User-configured editor association waits for extension registration with empty cache #244597', async () => {
 		const CUSTOM_EDITOR_INPUT_ID = 'testCustomEditorInput';
+		let editorResolverService: EditorResolverService | undefined;
+		let extensionRegistrationWaitCount = 0;
+		let customEditorRegistered = false;
 
-		// Set up a configuration with a user-configured editor association
+		const extensionService = new class extends TestExtensionService {
+			override async whenInstalledExtensionsRegistered(): Promise<boolean> {
+				extensionRegistrationWaitCount++;
+				if (!customEditorRegistered && editorResolverService) {
+					customEditorRegistered = true;
+					disposables.add(editorResolverService.registerEditor('*.md',
+						{
+							id: 'CUSTOM_MD_EDITOR',
+							label: 'Markdown Preview',
+							detail: 'Markdown Preview Details',
+							priority: RegisteredEditorPriority.option
+						},
+						{},
+						{
+							createEditorInput: ({ resource }) => ({ editor: new TestFileEditorInput(URI.parse(resource.toString()), CUSTOM_EDITOR_INPUT_ID) })
+						}
+					));
+				}
+				return true;
+			}
+		}();
+
 		const instantiationService = workbenchInstantiationService({
 			configurationService: () => new TestConfigurationService({
 				[editorsAssociationsSettingId]: {
@@ -1396,58 +1422,43 @@ suite('EditorResolverService', () => {
 				}
 			})
 		}, disposables);
+		instantiationService.stub(IExtensionService, extensionService);
 
 		const part = await createEditorPart(instantiationService, disposables);
 		instantiationService.stub(IEditorGroupsService, part);
 
-		const editorResolverService = instantiationService.createInstance(EditorResolverService);
+		editorResolverService = instantiationService.createInstance(EditorResolverService);
 		disposables.add(editorResolverService);
 
-		// Register both the default text editor and the custom markdown editor with 'option' priority
-		// (matching how markdown preview is registered in package.json)
-		const defaultEditor = editorResolverService.registerEditor('*',
+		disposables.add(editorResolverService.registerEditor('*',
 			{
-				id: 'default',
-				label: 'Default Editor',
-				detail: 'Default',
-				priority: RegisteredEditorPriority.default
+				id: DEFAULT_EDITOR_ASSOCIATION.id,
+				label: DEFAULT_EDITOR_ASSOCIATION.displayName,
+				detail: DEFAULT_EDITOR_ASSOCIATION.providerDisplayName,
+				priority: RegisteredEditorPriority.builtin
 			},
 			{},
 			{
-				createEditorInput: ({ resource }, group) => ({ editor: new TestFileEditorInput(URI.parse(resource.toString()), TEST_EDITOR_INPUT_ID) })
+				createEditorInput: ({ resource }) => ({ editor: new TestFileEditorInput(URI.parse(resource.toString()), TEST_EDITOR_INPUT_ID) })
 			}
-		);
+		));
 
-		const customEditor = editorResolverService.registerEditor('*.md',
-			{
-				id: 'CUSTOM_MD_EDITOR',
-				label: 'Markdown Preview',
-				detail: 'Markdown Preview Details',
-				priority: RegisteredEditorPriority.option
-			},
-			{},
-			{
-				createEditorInput: ({ resource }, group) => ({ editor: new TestFileEditorInput(URI.parse(resource.toString()), CUSTOM_EDITOR_INPUT_ID) })
-			}
-		);
-
-		// Resolve a .md file - should use the custom editor due to user association
 		const resultingResolution = await editorResolverService.resolveEditor(
 			{ resource: URI.file('test.md') },
 			part.activeGroup
 		);
+
+		assert.strictEqual(extensionRegistrationWaitCount, 1,
+			'User association must wait for extension registration even when the resolver cache is empty');
 		assert.ok(resultingResolution);
 		assert.notStrictEqual(typeof resultingResolution, 'number');
 		if (resultingResolution !== ResolvedStatus.ABORT && resultingResolution !== ResolvedStatus.NONE) {
 			assert.strictEqual(resultingResolution.editor.typeId, CUSTOM_EDITOR_INPUT_ID,
-				'Should resolve to custom editor when user has configured editor association');
+				'Should resolve to the custom editor registered while waiting for installed extensions');
 			resultingResolution.editor.dispose();
 		} else {
 			assert.fail('Expected editor to resolve successfully');
 		}
-
-		defaultEditor.dispose();
-		customEditor.dispose();
 	});
 
 	test('Diff editor Resolve - priority.diff overrides priority.editor for diffs', async () => {
