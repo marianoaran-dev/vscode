@@ -1443,6 +1443,10 @@ suite('EditorResolverService', () => {
 			}
 		));
 
+		// Ignore any extension-service waits caused by test harness setup. The assertion
+		// below is specifically about the resolve call under test.
+		extensionRegistrationWaitCount = 0;
+
 		const resultingResolution = await editorResolverService.resolveEditor(
 			{ resource: URI.file('test.md') },
 			part.activeGroup
