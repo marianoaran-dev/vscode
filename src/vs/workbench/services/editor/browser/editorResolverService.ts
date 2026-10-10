@@ -159,8 +159,11 @@ export class EditorResolverService extends Disposable implements IEditorResolver
 
 		// If it was resolved before we await for the extensions to activate and then proceed with resolution or else the backing extensions won't be registered
 		const editorAssociationType = isResourceDiffEditorInput(untypedEditor) ? EditorAssociationType.DiffEditor : isResourceMergeEditorInput(untypedEditor) ? EditorAssociationType.MergeEditor : EditorAssociationType.Editor;
-		if (this.cache && resource && (this.resourceMatchesCache(resource) || this.resourceMatchesUserAssociation(resource, editorAssociationType))) {
+		if (resource && (this.resourceMatchesCache(resource) || this.resourceMatchesUserAssociation(resource, editorAssociationType))) {
 			await this.extensionService.whenInstalledExtensionsRegistered();
+			// Extensions may have registered editors while we were waiting. Refresh the
+			// flattened snapshot before selecting the editor for this first open.
+			this._flattenedEditors = this._flattenEditorsMap();
 		}
 
 		// Undefined resource -> untilted. Other malformed URI's are unresolvable
